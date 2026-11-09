@@ -1,0 +1,199 @@
+package org.example.bookinghotels.Controller;
+
+import org.example.bookinghotels.entity.BookingDetail;
+import org.example.bookinghotels.entity.Room;
+import org.example.bookinghotels.repository.BookingDetailRepository;
+import org.example.bookinghotels.repository.RoomRepository;
+import org.example.bookinghotels.repository.RoomTypeRepository;
+import org.example.bookinghotels.service.RoomOperationService;
+import org.example.bookinghotels.service.RoomInventoryService;
+import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.ResponseEntity;
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.support.RedirectAttributes;
+
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+@Controller
+@RequestMapping("/admin/rooms")
+public class AdminRoomController {
+    private final RoomRepository roomRepository;
+    private final RoomTypeRepository roomTypeRepository;
+    private final BookingDetailRepository bookingDetailRepository;
+    private final RoomOperationService roomOperationService;
+    private final RoomInventoryService roomInventoryService;
+
+    public AdminRoomController(RoomRepository roomRepository,
+                               RoomTypeRepository roomTypeRepository,
+                               BookingDetailRepository bookingDetailRepository,
+                               RoomOperationService roomOperationService,
+                               RoomInventoryService roomInventoryService) {
+        this.roomRepository = roomRepository;
+        this.roomTypeRepository = roomTypeRepository;
+        this.bookingDetailRepository = bookingDetailRepository;
+        this.roomOperationService = roomOperationService;
+        this.roomInventoryService = roomInventoryService;
+    }
+
+    /**
+     * Màn hình quản lý phòng cũ đã được loại khỏi giao diện.
+     * Nghiệp vụ duyệt/gán phòng/trạng thái được tập trung tại Quản lý đơn đặt phòng.
+     * Giữ redirect để bookmark/URL cũ chuyển về màn hình nghiệp vụ hiện tại.
+     */
+    @GetMapping
+    public String index() {
+        return "redirect:/admin/bookings";
+    }
+
+    @PostMapping("/save")
+    public String save(@ModelAttribute Room submitted,
+                       @RequestParam Integer roomTypeId,
+                       RedirectAttributes ra) {
+        try {
+            var newType = roomTypeRepository.findById(roomTypeId)
+                    .orElseThrow(() -> new IllegalArgumentException("Loại phòng không tồn tại"));
+
+            Room room;
+            Integer oldTypeId = null;
+            if (submitted.getId() != null) {
+                room = roomRepository.findById(submitted.getId())
+                        .orElseThrow(() -> new IllegalArgumentException("Phòng không tồn tại"));
+                oldTypeId = room.getRoomType() == null ? null : room.getRoomType().getId();
+            } else {
+                room = new Room();
+            }
+
+            if (submitted.getRoomNumber() == null || submitted.getRoomNumber().isBlank()) {
+                throw new IllegalArgumentException("Số phòng không được để trống");
+            }
+            String roomNumber = submitted.getRoomNumber().trim();
+            roomRepository.findByRoomNumberIgnoreCase(roomNumber).ifPresent(existing -> {
+                if (submitted.getId() == null || !existing.getId().equals(submitted.getId())) {
+                    throw new IllegalArgumentException("Số phòng đã tồn tại");
+                }
+            });
+
+            room.setRoomType(newType);
+            room.setRoomNumber(roomNumber);
+            room.setThumbnail(submitted.getThumbnail());
+            room.setSlug(submitted.getSlug() == null || submitted.getSlug().isBlank()
+                    ? "phong-" + roomNumber.toLowerCase().replaceAll("[^a-z0-9]+", "-")
+                    : submitted.getSlug().trim());
+            roomRepository.saveAndFlush(room);
+
+            roomInventoryService.syncActualRoomCount(newType);
+            if (oldTypeId != null && !oldTypeId.equals(newType.getId())) {
+                roomTypeRepository.findById(oldTypeId).ifPresent(roomInventoryService::syncActualRoomCount);
+            }
+
+            ra.addFlashAttribute("success", "Đã lưu phòng " + room.getRoomNumber()
+                    + ". Tổng phòng của loại '" + newType.getNameType() + "' đã tự đồng bộ.");
+        } catch (Exception e) {
+            ra.addFlashAttribute("error", e.getMessage());
+        }
+        return "redirect:/admin/rooms";
+    }
+
+    @PostMapping("/{id}/delete")
+    public String delete(@PathVariable Integer id, RedirectAttributes ra) {
+        try {
+            List<BookingDetail> history = bookingDetailRepository.findByRoomIdWithBooking(id);
+            if (!history.isEmpty()) {
+                throw new IllegalStateException("Phòng đã có lịch sử đặt, không thể xóa. Hãy giữ phòng để bảo toàn dữ liệu.");
+            }
+            Room room = roomRepository.findById(id)
+                    .orElseThrow(() -> new IllegalArgumentException("Phòng không tồn tại"));
+            var type = room.getRoomType();
+            roomRepository.delete(room);
+            roomRepository.flush();
+            roomInventoryService.syncActualRoomCount(type);
+            ra.addFlashAttribute("success", "Đã xóa phòng và cập nhật tổng số phòng của loại phòng");
+        } catch (Exception e) {
+            ra.addFlashAttribute("error", e.getMessage());
+        }
+        return "redirect:/admin/rooms";
+    }
+
+    @PostMapping("/booking/{detailId}/check-in")
+    public String checkIn(@PathVariable Integer detailId,
+                          @RequestParam(required = false) Integer roomTypeId,
+                          RedirectAttributes ra) {
+        return runOperation(() -> roomOperationService.checkIn(detailId), "Đã check-in", ra, roomTypeId);
+    }
+
+    @PostMapping("/booking/{detailId}/check-out")
+    public String checkOut(@PathVariable Integer detailId,
+                           @RequestParam(required = false) Integer roomTypeId,
+                           RedirectAttributes ra) {
+        return runOperation(() -> roomOperationService.checkOut(detailId, false), "Đã checkout", ra, roomTypeId);
+    }
+
+    @PostMapping("/booking/{detailId}/no-show")
+    public String noShow(@PathVariable Integer detailId,
+                         @RequestParam(required = false) Integer roomTypeId,
+                         RedirectAttributes ra) {
+        return runOperation(() -> roomOperationService.markNoShow(detailId), "Đã đánh dấu khách không đến", ra, roomTypeId);
+    }
+
+    @PostMapping("/booking/{detailId}/status")
+    public String updateStatus(@PathVariable Integer detailId,
+                               @RequestParam String status,
+                               @RequestParam(required = false) Integer roomTypeId,
+                               RedirectAttributes ra) {
+        try {
+            roomOperationService.updateStatus(detailId, status);
+            ra.addFlashAttribute("success", "Đã cập nhật trạng thái booking thành " + status);
+        } catch (Exception e) {
+            ra.addFlashAttribute("error", e.getMessage());
+        }
+        return roomTypeId == null ? "redirect:/admin/rooms" : "redirect:/admin/rooms?roomTypeId=" + roomTypeId;
+    }
+
+    /**
+     * Endpoint API cung cấp danh sách phòng trống dựa theo loại phòng và khoảng thời gian (Check-in/Check-out)
+     * Phục vụ cho tính năng đặt phòng tại quầy (Walk-in) trên giao diện quản lý.
+     */
+    @GetMapping("/api/rooms/available")
+    @ResponseBody
+    public ResponseEntity<List<Map<String, Object>>> getAvailableRoomsForWalkIn(
+            @RequestParam Integer roomTypeId,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate checkin,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate checkout) {
+        try {
+            // Lấy tất cả phòng thuộc loại phòng này
+            List<Room> roomsOfType = roomRepository.findByRoomTypeId(roomTypeId);
+
+            List<Map<String, Object>> result = new ArrayList<>();
+            for (Room room : roomsOfType) {
+                // Kiểm tra xem phòng có bị trùng lịch trong khoảng thời gian checkin - checkout không
+                boolean isBooked = bookingDetailRepository.existsOverlappingBooking(room.getId(), checkin, checkout);
+
+                if (!isBooked) {
+                    Map<String, Object> roomMap = new HashMap<>();
+                    roomMap.put("id", room.getId());
+                    roomMap.put("roomNumber", room.getRoomNumber());
+                    roomMap.put("status", "Trống");
+                    result.add(roomMap);
+                }
+            }
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(List.of());
+        }
+    }
+
+    private String runOperation(Runnable operation, String success, RedirectAttributes ra, Integer roomTypeId) {
+        try {
+            operation.run();
+            ra.addFlashAttribute("success", success);
+        } catch (Exception e) {
+            ra.addFlashAttribute("error", e.getMessage());
+        }
+        return roomTypeId == null ? "redirect:/admin/rooms" : "redirect:/admin/rooms?roomTypeId=" + roomTypeId;
+    }
+}

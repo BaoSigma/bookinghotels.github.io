@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      layout:decorate="~{homeadmin}">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Khôi phục dữ liệu</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body>
+
+<section layout:fragment="content">
+
+    <div class="max-w-7xl mx-auto space-y-8">
+
+        <div class="pb-4 border-b border-gray-100">
+            <h2 class="text-2xl font-bold">🗑️ Khôi phục dữ liệu</h2>
+            <p class="text-slate-500 text-sm mt-1">Xem và khôi phục lại những gì đã lỡ xóa</p>
+        </div>
+
+        <!-- HÓA ĐƠN ĐÃ XÓA -->
+        <div>
+            <h3 class="text-lg font-bold mb-3 flex items-center gap-2">
+                <i class="fa-solid fa-file-invoice-dollar text-[#a7522e]"></i> Hóa đơn đã xóa
+            </h3>
+
+            <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-sm">
+                        <thead class="bg-slate-50 border-b text-slate-500 uppercase text-[10px] font-bold">
+                        <tr>
+                            <th class="px-6 py-3">Mã Hóa Đơn</th>
+                            <th class="px-6 py-3">Khách hàng</th>
+                            <th class="px-6 py-3">Thời gian nhận/trả</th>
+                            <th class="px-6 py-3">Hạng phòng</th>
+                            <th class="px-6 py-3">Tổng thanh toán</th>
+                            <th class="px-6 py-3">Trạng thái</th>
+                            <th class="px-6 py-3 text-right">Thao tác</th>
+                        </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100">
+                        <tr th:each="bd : ${deletedInvoices}" class="hover:bg-slate-50">
+                            <td class="px-6 py-3 font-medium" th:text="'FH-INV-' + ${bd.id}"></td>
+                            <td class="px-6 py-3" th:text="${bd.booking != null ? bd.booking.name : 'Khách lẻ'}"></td>
+
+                            <!-- Thời gian nhận/trả lấy từ bảng Booking -->
+                            <td class="px-6 py-3 text-slate-500"
+                                th:text="${bd.booking != null && bd.booking.checkinDate != null && bd.booking.checkoutDate != null ? #temporals.format(bd.booking.checkinDate, 'dd/MM/yyyy') + ' - ' + #temporals.format(bd.booking.checkoutDate, 'dd/MM/yyyy') : 'N/A'}">
+                            </td>
+
+                            <!-- Hạng phòng: Sử dụng nameType đúng với entity RoomType -->
+                            <td class="px-6 py-3" th:text="${bd.room != null && bd.room.roomType != null ? bd.room.roomType.nameType : 'N/A'}"></td>
+
+                            <!-- Tổng thanh toán -->
+                            <td class="px-6 py-3 font-medium text-emerald-600" th:text="${#numbers.formatDecimal(bd.price * bd.roomQuantity, 0, 'COMMA', 0, 'POINT')} + ' đ'"></td>
+
+                            <td class="px-6 py-3">
+                                <span class="text-xs px-2 py-1 rounded bg-slate-100 text-slate-600 font-semibold" th:text="${bd.status}"></span>
+                            </td>
+                            <td class="px-6 py-3 text-right">
+                                <form th:action="@{'/admin/trash/restore/invoice/' + ${bd.id}}" method="post">
+                                    <button type="submit" class="text-emerald-600 hover:underline text-xs font-semibold inline-flex items-center">
+                                        <i class="fa-solid fa-rotate-left mr-1"></i> Khôi phục
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div th:if="${#lists.isEmpty(deletedInvoices)}" class="p-6 text-center text-slate-400 text-sm">
+                    Không có hóa đơn nào đã xóa
+                </div>
+            </div>
+        </div>
+
+        <!-- NHÂN VIÊN ĐÃ XÓA -->
+        <div>
+            <h3 class="text-lg font-bold mb-3 flex items-center gap-2">
+                <i class="fa-solid fa-user-slash text-[#a7522e]"></i> Nhân viên đã xóa
+            </h3>
+
+            <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-sm">
+                        <thead class="bg-slate-50 border-b text-slate-500 uppercase text-[10px] font-bold">
+                        <tr>
+                            <th class="px-6 py-3">Username</th>
+                            <th class="px-6 py-3">Tên</th>
+                            <th class="px-6 py-3">Email</th>
+                            <th class="px-6 py-3 text-right">Thao tác</th>
+                        </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100">
+                        <tr th:each="u : ${deletedUsers}" class="hover:bg-slate-50">
+                            <td class="px-6 py-3 font-medium" th:text="${u.username}"></td>
+                            <td class="px-6 py-3" th:text="${u.name}"></td>
+                            <td class="px-6 py-3 text-slate-500" th:text="${u.email}"></td>
+                            <td class="px-6 py-3 text-right">
+                                <form th:action="@{'/admin/trash/restore/user/' + ${u.id}}" method="post">
+                                    <button type="submit" class="text-emerald-600 hover:underline text-xs font-semibold inline-flex items-center">
+                                        <i class="fa-solid fa-rotate-left mr-1"></i> Khôi phục
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div th:if="${#lists.isEmpty(deletedUsers)}" class="p-6 text-center text-slate-400 text-sm">
+                    Không có nhân viên nào đã xóa
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+</section>
+
+</body>
+</html>
